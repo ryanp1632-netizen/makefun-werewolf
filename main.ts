@@ -492,10 +492,8 @@ function seerShouldReveal(an: An): boolean {
   if (an.claims.has(an.me)) return true;
   if (res.some((r) => r.werewolf && an.alive.has(r.seat))) return true;
   if ([...an.claims.keys()].some((s) => s !== an.me && an.alive.has(s))) return true;
-  if (an.day >= 2 && res.length > 0) return true;
-  const pressure = an.accus.filter((a) => a.to === an.me && a.day === an.day).reduce((x, a) => x + a.w, 0);
-  if (pressure >= 2 && res.length > 0) return true;
-  return false;
+  // The table follows seer claims and the doctor guards a claimed seer: share every result from day 1.
+  return res.length > 0;
 }
 
 function seerSpeech(an: An, round: number): string {
@@ -521,8 +519,12 @@ function seerSpeech(an: An, round: number): string {
     parts.push(`Vote out ${who(an, t)} today, everyone, together.`);
     if (round === 1) parts.push('Doctor, please protect me tonight.');
   } else {
-    const t = argmax([...an.alive].filter((s) => s !== an.me && !res.some((r) => r.seat === s)), (s) => p.get(s) ?? 0, an, 'st2');
-    if (t !== null) parts.push(`My strongest suspicion among the rest is ${who(an, t)}. Trust the seats I cleared.`);
+    const rest = [...an.alive].filter((s) => s !== an.me && !res.some((r) => r.seat === s));
+    const t = argmax(rest, (s) => p.get(s) ?? 0, an, 'st2');
+    const base = rest.length > 0 ? rest.reduce((x, s) => x + (p.get(s) ?? 0), 0) / rest.length : 0;
+    const why = t === null ? [] : reasonsAgainst(an, t);
+    if (t !== null && ((p.get(t) ?? 0) >= 1.4 * base || why.length > 0)) parts.push(`My strongest suspicion among the rest is ${who(an, t)}${why.length > 0 ? `: ${why[0]}` : ''}.`);
+    parts.push('The seats I cleared are village: do not vote them. I will inspect again tonight.');
   }
   return parts.join(' ');
 }

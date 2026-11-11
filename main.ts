@@ -613,6 +613,18 @@ function wolfCtx(an: An): WolfCtx {
   return { partner, wolves, ps, realClaims, hunters, myClaim: an.claims.get(an.me) };
 }
 
+/**
+ * Bus mode: one uncontested seer claim has named the partner (not the agent), and neither wolf has
+ * claimed seer. Defending the partner would only tie the agent to them, so the agent sides with the seer.
+ */
+function busPartner(an: An, w: WolfCtx): boolean {
+  const p = w.partner;
+  if (p === null || !an.alive.has(p) || w.myClaim !== undefined || an.claims.has(p)) return false;
+  if (w.realClaims.length !== 1) return false;
+  const c = an.claims.get(w.realClaims[0]!)!;
+  return c.results.some((r) => r.wolf && r.target === p) && !c.results.some((r) => r.wolf && r.target === an.me);
+}
+
 function kill(an: An, options: Seat[]): Seat | null {
   if (options.length === 0) return null;
   const w = wolfCtx(an);
@@ -667,6 +679,7 @@ function wolfVote(an: An, options: Seat[]): Seat | null {
   const villagers = opts.filter((s) => !w.wolves.has(s));
   const maxOf = (pred: (s: Seat) => boolean): number => Math.max(0, ...[...t].filter(([s]) => pred(s)).map(([, n]) => n));
   const partner = w.partner !== null && an.alive.has(w.partner) && opts.includes(w.partner) ? w.partner : null;
+  if (partner !== null && busPartner(an, w)) return partner;
   if (partner !== null) {
     const pv = t.get(partner) ?? 0;
     const other = maxOf((s) => s !== partner);
@@ -735,6 +748,12 @@ function wolfSpeech(an: An, round: number): string {
     if (target !== null && an.alive.has(target)) {
       parts.push(`${who(an, target)} is a werewolf faking the seer role to get the real seer exiled. Vote out ${who(an, target)} today.`);
     }
+    return parts.join(' ');
+  }
+  if (busPartner(an, w)) {
+    const c = w.realClaims[0]!;
+    parts.push(`I believe ${who(an, c)}'s seer claim: nobody has contested it.`);
+    parts.push(`That makes ${who(an, w.partner!)} our werewolf today. I am voting ${who(an, w.partner!)}, and I ask everyone to do the same so we do not split.`);
     return parts.join(' ');
   }
   const target = wolfTarget(an, w);

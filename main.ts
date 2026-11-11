@@ -560,8 +560,12 @@ function villageSpeech(an: An, round: number): string {
   } else if (bc !== null) {
     parts.push(`I believe ${who(an, bc)}'s seer claim and I will follow their results.`);
   }
-  if (t !== null && pt >= 0.2) {
-    const why = reasonsAgainst(an, t);
+  // Name a seat only when the evidence sets it apart: a guess said aloud starts a wrong wagon.
+  const unknown = others.filter((s) => !an.revealed.has(s));
+  const base = unknown.length > 0 ? unknown.reduce((x, s) => x + (p.get(s) ?? 0), 0) / unknown.length : 0;
+  const why0 = t === null ? [] : reasonsAgainst(an, t);
+  if (t !== null && pt >= 0.2 && (pt >= 1.4 * base || why0.length > 0 || heat(an, t) >= 2)) {
+    const why = why0;
     parts.push(`My vote is on ${who(an, t)}${why.length > 0 ? `: ${why.slice(0, 2).join(', and ')}` : ''}.`);
     if (round === 2) parts.push(`Let us not split the vote; split votes only help the wolves.`);
   } else {
@@ -831,7 +835,7 @@ function wolfSpeech(an: An, round: number): string {
     const backers = [...new Set(an.accus.filter((a) => a.to === target && a.day === an.day && !w.wolves.has(a.from)).map((a) => a.from))].slice(0, 2);
     if (why.length > 0) parts.push(`I lean ${who(an, target)}: ${why.slice(0, 2).join(', and ')}.`);
     else if (backers.length > 0) parts.push(`I agree with ${backers.map((b) => who(an, b)).join(' and ')} about ${who(an, target)}; that read makes sense to me.`);
-    else parts.push(`${who(an, target)} is my lean for now, but I am open to better evidence.`);
+    else parts.push('No strong read yet. I will follow the evidence and the votes rather than guess.');
   }
   if (round === 2) parts.push('Let us not split the vote; that only helps the wolves.');
   return parts.join(' ');
@@ -898,9 +902,11 @@ async function handle(p: Pending): Promise<void> {
   let act: Record<string, unknown>;
   try {
     act = decide(p);
-  } catch {
+  } catch (err) {
+    if (process.env.WEREWOLF_DEBUG) console.error(`game ${p.game} ${p.decision}:`, err);
     act = fallbackFor(p);
   }
+  if (process.env.WEREWOLF_DEBUG && act.pass !== true && act.target === null) console.error(`game ${p.game} ${p.decision}: abstained`);
   const r = await post('/act', act);
   if (r.status === 400) await post('/act', fallbackFor(p));
 }

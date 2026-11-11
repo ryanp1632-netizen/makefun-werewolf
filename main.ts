@@ -47,6 +47,8 @@ export interface Pending {
 }
 
 const SEED = process.env.MAKEFUN_TRIAL_SEED ?? '0';
+/** Whether a wolf claims seer first on day 1. Dev trials scored it no better than staying quiet. */
+const PROACTIVE_CLAIM = false;
 const MAX_CHARS = 500;
 
 /** A number in [0, 1) from the trial seed and the parts given: the only randomness the agent uses. */
@@ -126,7 +128,7 @@ const INSPECT =
 const DOCTOR_CLAIM = /\b(?:i am|i'm|im|i’m)\s+(?:actually\s+|really\s+)?(?:the\s+)?doctor\b|\bas the doctor\b/i;
 const NOT_WOLF = /\b(?:not|isn['’]?t|is not|wasn['’]?t|was not|aren['’]?t|never|no)\s+(?:a\s+|the\s+|one of the\s+)?(?:were)?wol(?:f|ves)\b/i;
 const AFFIRM_WOLF =
-  /=s*(?:as+)?(?:were)?wolf|\b(?:is|are|was|=)\s+(?:a\s+|definitely\s+a\s+|confirmed\s+(?:as\s+)?(?:a\s+)?|one of the\s+)?(?:were)?wol(?:f|ves)\b|\bwerewolf\s*[!:]|\bWEREWOLF\b|\bWOLF\b|came back (?:as )?(?:a )?(?:were)?wolf|:\s*(?:a\s+)?(?:were)?wolf\b|[-—]\s*(?:a\s+)?(?:were)?wolf\b|found (?:a |the |our )?(?:were)?wolf/;
+  /=\s*(?:a\s+)?(?:were)?wolf\b|\b(?:is|are|was|=)\s+(?:a\s+|definitely\s+a\s+|confirmed\s+(?:as\s+)?(?:a\s+)?|one of the\s+)?(?:were)?wol(?:f|ves)\b|\bwerewolf\s*[!:]|\bWEREWOLF\b|\bWOLF\b|came back (?:as )?(?:a )?(?:were)?wolf|:\s*(?:a\s+)?(?:were)?wolf\b|[-—]\s*(?:a\s+)?(?:were)?wolf\b|found (?:a |the |our )?(?:were)?wolf/;
 const CLEAN = /\b(?:innocent|cleared?|clean|good|safe|trustworthy|village[- ]aligned|on the village(?:'s)? side|town|a villager|not evil)\b|\b(?:is|are|was)\s+(?:on the\s+)?village\b/i;
 const WOLFY = /\b(?:were)?wol(?:f|ves)\b|\bwerewolves\b/i;
 const ACCUSE =
@@ -678,7 +680,7 @@ function wolfTarget(an: An, w: WolfCtx): Seat | null {
   if (villagers.length === 0) return null;
   const myTargets = (w.myClaim?.results ?? []).filter((r) => r.wolf && an.alive.has(r.target)).map((r) => r.target);
   if (myTargets.length > 0) return myTargets[myTargets.length - 1]!;
-  return argmax(villagers, (s) => (w.ps.get(s) ?? 0) + 0.03 * heat(an, s) + (w.hunters.includes(s) ? 0.35 : 0) + (an.claims.has(s) ? -0.15 : 0), an, 'wt');
+  return argmax(villagers, (s) => (w.ps.get(s) ?? 0) + 0.08 * heat(an, s) + (w.hunters.includes(s) ? 0.35 : 0) + (an.claims.has(s) ? -0.15 : 0), an, 'wt');
 }
 
 function wolfVote(an: An, options: Seat[]): Seat | null {
@@ -756,7 +758,7 @@ function wolfSpeech(an: An, round: number): string {
   const partnerAlive = w.partner !== null && an.alive.has(w.partner);
   // Day 1, nobody has claimed seer: claim it first, clear the partner, and steer the vote by behaviour.
   const seerDead = [...an.revealed.values()].includes('seer');
-  const proactive = w.myClaim === undefined && !partnerClaimed && partnerAlive && an.day === 1 && w.realClaims.length === 0 && !seerDead;
+  const proactive = PROACTIVE_CLAIM && w.myClaim === undefined && !partnerClaimed && partnerAlive && an.day === 1 && w.realClaims.length === 0 && !seerDead;
   if (w.myClaim !== undefined && seerDead) {
     // The real seer's role came out: the claim is blown. Call it a protective bluff and argue on votes.
     const t = wolfTarget(an, w);
@@ -815,7 +817,7 @@ function wolfSpeech(an: An, round: number): string {
         'wopen',
       ),
     );
-    if (target !== null && (w.ps.get(target) ?? 0) > 0.3) parts.push(`So far ${who(an, target)} is the one I am watching.`);
+    if (target !== null && heat(an, target) >= 2) parts.push(`Like others, I have my eye on ${who(an, target)}.`);
     return parts.join(' ');
   }
   const bc = w.realClaims.length === 1 ? w.realClaims[0]! : null;
@@ -824,8 +826,12 @@ function wolfSpeech(an: An, round: number): string {
     parts.push(`I do not buy ${who(an, target)}'s seer claim. A wolf can claim seer and name anyone, and nobody has confirmed it.`);
   }
   if (target !== null) {
+    // Blend in: echo the table's own read, with its reasons, instead of pushing a fresh one.
     const why = reasonsAgainst(an, target);
-    parts.push(`My vote is on ${who(an, target)}${why.length > 0 ? `: ${why.slice(0, 2).join(', and ')}` : ''}.`);
+    const backers = [...new Set(an.accus.filter((a) => a.to === target && a.day === an.day && !w.wolves.has(a.from)).map((a) => a.from))].slice(0, 2);
+    if (why.length > 0) parts.push(`I lean ${who(an, target)}: ${why.slice(0, 2).join(', and ')}.`);
+    else if (backers.length > 0) parts.push(`I agree with ${backers.map((b) => who(an, b)).join(' and ')} about ${who(an, target)}; that read makes sense to me.`);
+    else parts.push(`${who(an, target)} is my lean for now, but I am open to better evidence.`);
   }
   if (round === 2) parts.push('Let us not split the vote; that only helps the wolves.');
   return parts.join(' ');

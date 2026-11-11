@@ -1,0 +1,4 @@
+.env
+node_modules/
+sim/out/
+*.tar.gz

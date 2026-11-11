@@ -356,6 +356,10 @@ function likelihood(an: An, W: Set<Seat>, self: boolean): number {
     }
   }
   if (liveVillageClaimants >= 2) l *= Math.pow(0.15, liveVillageClaimants - 1);
+  // The doctor's own save: a quiet dawn after protecting a seat means the wolves most likely attacked it,
+  // and wolves never attack a wolf (unless they failed to agree and attacked nobody).
+  const lp = an.v.lastProtect;
+  if (self && an.role === 'doctor' && lp !== null && lp.seat !== null && an.quietDawns.includes(lp.night) && W.has(lp.seat)) l *= 0.15;
   // A lone, uncontested seer claim is more often the real seer than a wolf's bluff.
   const live = [...an.claims.keys()].filter((s) => !an.revealed.has(s) && !(self && s === an.me));
   if (live.length === 1 && !deadSeer && W.has(live[0]!)) l *= 0.5;

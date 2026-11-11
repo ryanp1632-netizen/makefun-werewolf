@@ -126,11 +126,11 @@ const INSPECT =
 const DOCTOR_CLAIM = /\b(?:i am|i'm|im|i’m)\s+(?:actually\s+|really\s+)?(?:the\s+)?doctor\b|\bas the doctor\b/i;
 const NOT_WOLF = /\b(?:not|isn['’]?t|is not|wasn['’]?t|was not|aren['’]?t|never|no)\s+(?:a\s+|the\s+|one of the\s+)?(?:were)?wol(?:f|ves)\b/i;
 const AFFIRM_WOLF =
-  /\b(?:is|are|was|=)\s+(?:a\s+|definitely\s+a\s+|confirmed\s+(?:as\s+)?(?:a\s+)?|one of the\s+)?(?:were)?wol(?:f|ves)\b|\bwerewolf\s*[!:]|\bWEREWOLF\b|\bWOLF\b|came back (?:as )?(?:a )?(?:were)?wolf|:\s*(?:a\s+)?(?:were)?wolf\b|[-—]\s*(?:a\s+)?(?:were)?wolf\b|found (?:a |the |our )?(?:were)?wolf/;
+  /=s*(?:as+)?(?:were)?wolf|\b(?:is|are|was|=)\s+(?:a\s+|definitely\s+a\s+|confirmed\s+(?:as\s+)?(?:a\s+)?|one of the\s+)?(?:were)?wol(?:f|ves)\b|\bwerewolf\s*[!:]|\bWEREWOLF\b|\bWOLF\b|came back (?:as )?(?:a )?(?:were)?wolf|:\s*(?:a\s+)?(?:were)?wolf\b|[-—]\s*(?:a\s+)?(?:were)?wolf\b|found (?:a |the |our )?(?:were)?wolf/;
 const CLEAN = /\b(?:innocent|cleared?|clean|good|safe|trustworthy|village[- ]aligned|on the village(?:'s)? side|town|a villager|not evil)\b|\b(?:is|are|was)\s+(?:on the\s+)?village\b/i;
 const WOLFY = /\b(?:were)?wol(?:f|ves)\b|\bwerewolves\b/i;
 const ACCUSE =
-  /suspicious|suspect|\bsus\b|\bwol(?:f|ves)\b|werewol|\blying\b|\bliar\b|\blies\b|\bfake\b|\bvot(?:e|ing)\s+(?:for|to exile|out|against)?|\bexile\b|eliminate|\bevil\b|deflect|defensive|scum|odd|off about|don['’]?t trust|do not trust|distrust|don['’]?t believe|do not believe/gi;
+  /suspicious|suspect|\bsus\b|\bwol(?:f|ves)\b|werewol|\blying\b|\bliar\b|\blies\b|\bfake\b|\bvot(?:e|ing)\s+(?:for|to exile|out|against)?|\bexile\b|eliminate|\bevil\b|deflect|defensive|scum|odd|off about|worr(?:y|ies|ied)|don['’]?t trust|do not trust|distrust|don['’]?t believe|do not believe/gi;
 const DEFEND = /\btrust\b|\binnocent\b|\bclear(?:ed)?\b|\bbelieve\b|not suspicious|\bconfirmed\b|\bprotect\b|\bcredible\b|\bon our side\b/i;
 const DISTRUST = /don['’]?t trust|do not trust|distrust|don['’]?t believe|do not believe|not credible|lying|liar|fake/i;
 
@@ -247,7 +247,8 @@ function readSpeech(an: An, s: Speech): void {
     if (claim !== undefined) {
       const pol = resultPolarity(c);
       const verb = c.search(INSPECT);
-      const resulty = verb >= 0 || /\bnight\s*\d|\bresult|\bchecked|\binspected|\bcame back|\bconfirmed\b|[:—]/i.test(c) || claimsSeer;
+      const resulty =
+        verb >= 0 || /\bnight\s*\d|\bresult|\bchecked|\binspected|\bcame back/i.test(c) || (claimsSeer && (AFFIRM_WOLF.test(c) || NOT_WOLF.test(c)));
       if (pol !== null && resulty) {
         const after = verb >= 0 ? ms.find((m) => m.idx > verb) : undefined;
         const target = (after ?? ms[0]!).seat;
@@ -381,6 +382,11 @@ function likelihood(an: An, W: Set<Seat>, self: boolean): number {
 
 const who = (an: An, s: Seat): string => `seat ${s} (${an.names.get(s) ?? '?'})`;
 
+/** How many different players accused a seat today: a weak signal, used to break near-ties. */
+function heat(an: An, s: Seat): number {
+  return new Set(an.accus.filter((a) => a.to === s && a.day === an.day && a.from !== an.me).map((a) => a.from)).size;
+}
+
 function tallyToday(an: An): Map<Seat, number> {
   const t = new Map<Seat, number>();
   for (const v of an.votes) if (v.day === an.day && v.target !== null) t.set(v.target, (t.get(v.target) ?? 0) + 1);
@@ -462,7 +468,7 @@ function villageVote(an: An, options: Seat[]): Seat | null {
   const p = wolfProbs(an, true);
   const opts = options.filter((s) => s !== an.me);
   if (opts.length === 0) return null;
-  const best = argmax(opts, (s) => p.get(s) ?? 0, an, 'vv')!;
+  const best = argmax(opts, (s) => (p.get(s) ?? 0) + 0.03 * heat(an, s), an, 'vv')!;
   const pb = p.get(best) ?? 0;
   if (pb >= 0.55) return best;
   const t = tallyToday(an);
@@ -645,8 +651,13 @@ function kill(an: An, options: Seat[]): Seat | null {
       let sc = 1 + rnd(an.game, an.day, 'kill', s);
       const claim = an.claims.get(s);
       if (claim !== undefined && w.realClaims.includes(s)) {
-        const fresh = claim.day === an.day - 1 && !doctorDead && lastTarget !== s;
-        sc += fresh && !w.hunters.includes(s) ? 4 : 10;
+        if (w.myClaim !== undefined) {
+          // Killing the real seer reveals them as the seer and exposes the agent's own claim.
+          sc -= 8;
+        } else {
+          const fresh = claim.day === an.day - 1 && !doctorDead && lastTarget !== s;
+          sc += fresh && !w.hunters.includes(s) ? 4 : 10;
+        }
       }
       if (lastTarget === s && quietLast) sc += 12;
       if (an.doctorClaims.has(s)) sc += 6;
@@ -667,7 +678,7 @@ function wolfTarget(an: An, w: WolfCtx): Seat | null {
   if (villagers.length === 0) return null;
   const myTargets = (w.myClaim?.results ?? []).filter((r) => r.wolf && an.alive.has(r.target)).map((r) => r.target);
   if (myTargets.length > 0) return myTargets[myTargets.length - 1]!;
-  return argmax(villagers, (s) => (w.ps.get(s) ?? 0) + (w.hunters.includes(s) ? 0.35 : 0) + (an.claims.has(s) ? -0.15 : 0), an, 'wt');
+  return argmax(villagers, (s) => (w.ps.get(s) ?? 0) + 0.03 * heat(an, s) + (w.hunters.includes(s) ? 0.35 : 0) + (an.claims.has(s) ? -0.15 : 0), an, 'wt');
 }
 
 function wolfVote(an: An, options: Seat[]): Seat | null {
@@ -695,6 +706,8 @@ function wolfVote(an: An, options: Seat[]): Seat | null {
     if (save !== null) return save;
   }
   if (villagers.length === 0) return null;
+  const rival = w.myClaim !== undefined ? w.realClaims.find((s) => villagers.includes(s)) : undefined;
+  if (rival !== undefined) return rival;
   const hunter = w.hunters.find((s) => villagers.includes(s));
   if (hunter !== undefined) return hunter;
   const target = wolfTarget(an, w);
@@ -709,7 +722,7 @@ function wolfVote(an: An, options: Seat[]): Seat | null {
 }
 
 /** The fake seer results the agent has announced, plus a fresh one for each night since. */
-function fakeResults(an: An, w: WolfCtx, accuse: Seat | null): { night: number; seat: Seat; wolf: boolean }[] {
+function fakeResults(an: An, w: WolfCtx, accuse: Seat | null, clear: Seat | null = null): { night: number; seat: Seat; wolf: boolean }[] {
   const out: { night: number; seat: Seat; wolf: boolean }[] = [];
   const said = w.myClaim?.results ?? [];
   let night = 1;
@@ -721,6 +734,8 @@ function fakeResults(an: An, w: WolfCtx, accuse: Seat | null): { night: number; 
     if (accuse !== null && !used.has(accuse) && night === an.day) {
       seat = accuse;
       wolf = true;
+    } else if (clear !== null && !used.has(clear)) {
+      seat = clear;
     } else {
       const pool = [...an.names.keys()].filter((s) => !w.wolves.has(s) && !used.has(s) && !w.realClaims.includes(s) && s !== accuse);
       // Clear a villager the village already trusts: a clear is never disproved by a villager's death.
@@ -738,15 +753,46 @@ function wolfSpeech(an: An, round: number): string {
   const partnerClaimed = w.partner !== null && an.claims.has(w.partner);
   const huntsMe = w.hunters.filter((s) => an.claims.get(s)!.results.some((r) => r.wolf && r.target === an.me));
   const parts: string[] = [];
-  if (w.myClaim !== undefined || (huntsMe.length > 0 && !partnerClaimed)) {
-    // The counter-claim: I am the seer and my accuser is the werewolf.
-    const accuser = huntsMe[0] ?? w.realClaims.find((s) => an.alive.has(s)) ?? null;
-    const res = fakeResults(an, w, w.myClaim === undefined ? accuser : null);
-    parts.push(w.myClaim === undefined ? 'I am the real seer, and I have to come out now.' : 'I repeat: I am the real seer.');
+  const partnerAlive = w.partner !== null && an.alive.has(w.partner);
+  // Day 1, nobody has claimed seer: claim it first, clear the partner, and steer the vote by behaviour.
+  const seerDead = [...an.revealed.values()].includes('seer');
+  const proactive = w.myClaim === undefined && !partnerClaimed && partnerAlive && an.day === 1 && w.realClaims.length === 0 && !seerDead;
+  if (w.myClaim !== undefined && seerDead) {
+    // The real seer's role came out: the claim is blown. Call it a protective bluff and argue on votes.
+    const t = wolfTarget(an, w);
+    parts.push(round === 1 ? 'I owe the village the truth: I am a villager. I claimed seer to draw the wolves away from the real seer, and it cost us. I am sorry.' : 'Judge me on my votes, not that bluff.');
+    if (t !== null) {
+      const why = reasonsAgainst(an, t);
+      parts.push(`My vote is on ${who(an, t)}${why.length > 0 ? `: ${why.slice(0, 2).join(', and ')}` : ''}.`);
+    }
+    return parts.join(' ');
+  }
+  if (w.myClaim !== undefined || proactive || (huntsMe.length > 0 && !partnerClaimed && !seerDead)) {
+    const rival = huntsMe[0] ?? w.realClaims.find((s) => an.alive.has(s)) ?? null;
+    const said = new Set((w.myClaim?.results ?? []).map((r) => r.target));
+    const accuse = rival !== null && !said.has(rival) ? rival : null;
+    const res = fakeResults(an, w, accuse, w.myClaim === undefined && accuse === null && partnerAlive ? w.partner : null);
+    parts.push(
+      w.myClaim === undefined
+        ? accuse !== null
+          ? 'I am the real seer, and I have to come out now.'
+          : 'I am the seer, and I am coming out now so the village has something solid to work with.'
+        : round === 1
+          ? 'I repeat: I am the real seer.'
+          : 'Once more: I am the seer.',
+    );
     parts.push(res.map((r) => `Night ${r.night}: ${who(an, r.seat)} is ${r.wolf ? 'a WEREWOLF' : 'NOT a werewolf'}.`).join(' '));
-    const target = res.filter((r) => r.wolf && an.alive.has(r.seat)).map((r) => r.seat)[0] ?? accuser;
-    if (target !== null && an.alive.has(target)) {
-      parts.push(`${who(an, target)} is a werewolf faking the seer role to get the real seer exiled. Vote out ${who(an, target)} today.`);
+    const named = res.filter((r) => r.wolf && an.alive.has(r.seat)).map((r) => r.seat)[0] ?? (rival !== null && an.alive.has(rival) ? rival : null);
+    if (named !== null) {
+      parts.push(`${who(an, named)} is a werewolf faking the seer role to get the real seer exiled. Vote out ${who(an, named)} today.`);
+    } else {
+      const t = wolfTarget(an, w);
+      if (t !== null) {
+        const why = reasonsAgainst(an, t);
+        parts.push(`${res.some((r) => r.wolf) ? '' : 'So far my inspections found no werewolf. '}Today I go by behaviour, and ${who(an, t)} worries me most${why.length > 0 ? `, as ${why[0]}` : ''}. Vote ${who(an, t)} with me.`);
+      }
+      const cleared = res.filter((r) => !r.wolf && an.alive.has(r.seat)).map((r) => who(an, r.seat));
+      if (cleared.length > 0) parts.push(`Do not waste votes on ${cleared.join(' or ')}.`);
     }
     return parts.join(' ');
   }
@@ -769,7 +815,6 @@ function wolfSpeech(an: An, round: number): string {
         'wopen',
       ),
     );
-    parts.push('Seer, if you have a result, share it.');
     if (target !== null && (w.ps.get(target) ?? 0) > 0.3) parts.push(`So far ${who(an, target)} is the one I am watching.`);
     return parts.join(' ');
   }
